@@ -37,7 +37,7 @@ ui <- fluidPage(
       # Season filter
       sliderInput("season_range","Season Range:",
                   min = 1936, max = as.numeric(year(Sys.Date())), 
-                  value = c(1936, as.numericyear(Sys.Date())), step = 1),
+                  value = c(1936, as.numeric(year(Sys.Date()))), step = 1),
       
       
       # Download button
