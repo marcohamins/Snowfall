@@ -441,14 +441,24 @@ server <- function(input, output, session) {
       p_main <- plots[[1]]
       p_yearly <- plots[[2]]
       
-      # Subplot with shared y-axis; only left plot shows y tick labels (right has none)
-      subplot(
-        ggplotly(p_main, tooltip = "text"),
-        ggplotly(p_yearly, tooltip = "text"),
-        nrows = 1,
-        shareY = TRUE
-      ) %>%
-        layout(legend = list(orientation = "h", y = -0.1))
+      # Convert to plotly; subplot can hide the first plot's legend so we fix it after
+      pl_main <- ggplotly(p_main, tooltip = "text")
+      pl_yearly <- ggplotly(p_yearly, tooltip = "text")
+      n_traces_main <- length(pl_main$x$data)
+      
+      out <- subplot(pl_main, pl_yearly, nrows = 1, shareY = TRUE, margin = 0.05) %>%
+        layout(showlegend = TRUE,
+               legend = list(orientation = "h", y = -0.12, x = 0.5, xanchor = "center"),
+               margin = list(b = 80))
+      
+      # Subplot may set showlegend=FALSE on all traces; restore legend for first plot only
+      for (i in seq_len(n_traces_main)) {
+        out$x$data[[i]]$showlegend <- TRUE
+      }
+      for (i in (n_traces_main + 1):length(out$x$data)) {
+        out$x$data[[i]]$showlegend <- FALSE
+      }
+      out
       
     }, error = function(e) {
       # Return a simple plot with error message
