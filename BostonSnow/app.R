@@ -17,10 +17,9 @@ ui <- fluidPage(
     sidebarPanel(
       helpText("Snow accumulation (in.) from October 1st for each winter season"),
       
-      # Year highlighting controls
-      h4("Highlighted Years"),
-      checkboxInput("highlight_current", "Highlight Current Year", value = TRUE),
-      checkboxInput("highlight_previous", "Highlight Previous Year", value = TRUE),
+      # Year highlighting controls (labels show season names via server)
+      h4("Highlighted Seasons"),
+      uiOutput("highlight_controls"),
       
       # Statistical overlay controls
       h4("Statistical Overlays (from full dataset)"),
@@ -54,6 +53,25 @@ ui <- fluidPage(
 
 # Define server logic
 server <- function(input, output, session) {
+  
+  # Dynamic labels for current/previous season checkboxes (e.g. "2025-2026", "2024-2025")
+  output$highlight_controls <- renderUI({
+    data <- snowfall_data()
+    all_years <- unique(data$yearRange)
+    if (length(all_years) == 0) {
+      return(tagList(
+        checkboxInput("highlight_current", "Current year", value = TRUE),
+        checkboxInput("highlight_previous", "Previous year", value = TRUE)
+      ))
+    }
+    current <- all_years[which.max(as.numeric(substr(all_years, 6, 9)))]
+    prev_idx <- which.max(as.numeric(substr(all_years, 6, 9))) - 1
+    previous <- if (prev_idx >= 1) all_years[prev_idx] else all_years[1]
+    tagList(
+      checkboxInput("highlight_current", current, value = TRUE),
+      checkboxInput("highlight_previous", previous, value = TRUE)
+    )
+  })
   
   # Read and process data (from URL if SNOW_DATA_URL set, else local CSV)
   snowfall_data <- reactive({
@@ -234,14 +252,14 @@ server <- function(input, output, session) {
                    limits = c(as.Date("2021-10-01"), as.Date("2022-05-30")),
                    breaks = "1 months") +
       ylim(c(0, 115)) +
-      theme_pubr(base_size = 16)  + 
-      annotate("text", label = "Data from NOAA: Boston Logan", 
-               x = as.Date("2021-11-10"), y = 110)
+      theme_pubr(base_size = 16)
     
     p1 <- data_subset %>% group_by(snowYear,highlight) %>% 
       summarise(maxsnow = (max(cum_sum)/10)*0.393701, .groups="drop") %>% 
-      ggplot(mapping=aes(x=snowYear,y=maxsnow)) +
-      xlab("Year") + ylab("End of season cummulative snowfall (in.)") + 
+      ggplot(mapping=aes(x=snowYear, y=maxsnow,
+                         text = paste0("Season ending: ", snowYear,
+                                       "<br>Total snow: ", round(maxsnow, 1), " in"))) +
+      xlab("Year") + ylab("End of season cumulative snowfall (in.)") + 
       coord_cartesian(xlim = c(1934,as.numeric(year(Sys.Date()))),ylim= c(0,115)) +
       theme_pubr(base_size = 20) +
       guides(col=guide_legend("")) 
@@ -289,6 +307,8 @@ server <- function(input, output, session) {
       p1 <- p1 + geom_point(aes(col=snowYear)) + scale_color_viridis_c(name = "Year",option = "B") +
         guides(alpha = "none")
     }
+    # No legend for points plot (line plot legend is enough)
+    p1 <- p1 + theme(legend.position = "none")
     
     # Calculate statistics for each day across all years
     stats_data <- data %>%
