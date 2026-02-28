@@ -1,0 +1,471 @@
+# Load required libraries
+library(shiny)
+library(readr)
+library(ggplot2)
+library(lubridate)
+library(dplyr)
+library(scales)
+library(ggpubr)
+library(plotly)
+library(patchwork)
+
+# Define UI
+ui <- fluidPage(
+  titlePanel("Boston Snowfall Accumulation by Winter Season"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      helpText("Snow accumulation (in.) from October 1st for each winter season"),
+      
+      # Year highlighting controls
+      h4("Highlighted Years"),
+      checkboxInput("highlight_current", "Highlight Current Year", value = TRUE),
+      checkboxInput("highlight_previous", "Highlight Previous Year", value = TRUE),
+      
+      # Statistical overlay controls
+      h4("Statistical Overlays (from full dataset)"),
+      checkboxInput("show_median", "Show Median", value = FALSE),
+      checkboxInput("show_mean", "Show Mean", value = TRUE),
+      checkboxInput("show_min_max", "Show Min/Max", value = FALSE),
+      checkboxInput("show_ci_50", "Show 50% Confidence Interval", value = FALSE),
+      checkboxInput("show_ci_95", "Show 95% Confidence Interval", value = FALSE),
+      
+      # Alpha control
+      sliderInput("historical_alpha", "Historical Line Opacity:",
+                  min = 0.1, max = 1.0, value = 0.5, step = 0.05),
+      
+      # Season filter
+      sliderInput("season_range","Season Range:",
+                  min = 1936, max = 2025, value = c(1936, 2025), step = 1),
+      
+      
+      # Download button
+      downloadButton("downloadPlot", "Download Plot")
+    ),
+    
+    mainPanel(
+      plotlyOutput("snowPlot", height = "600px"),
+      br(),
+      textOutput("dataSource")
+    )
+  )
+)
+
+# Define server logic
+server <- function(input, output, session) {
+  
+  # Read and process data (from URL if SNOW_DATA_URL set, else local CSV)
+  snowfall_data <- reactive({
+    data_url <- Sys.getenv("SNOW_DATA_URL", "")
+    data_path <- "USW00014739_2_24_25.csv"
+    tryCatch({
+      if (nzchar(data_url)) {
+        snowfalldata <- read_csv(data_url, show_col_types = FALSE)
+      } else {
+        snowfalldata <- read_csv(data_path, show_col_types = FALSE)
+      }
+      snowfalldata$DATE <- as.Date(snowfalldata$DATE)
+      # Infer current winter from latest date in data (e.g. 2025-02-28 -> 2024-2025)
+      max_date <- max(snowfalldata$DATE, na.rm = TRUE)
+      yr <- as.numeric(format(max_date, "%Y"))
+      mo <- as.numeric(format(max_date, "%m"))
+      if (mo >= 7) {
+        year <- as.character(yr + 1)
+        preyear <- as.character(yr)
+      } else {
+        year <- as.character(yr)
+        preyear <- as.character(yr - 1)
+      }
+    }, error = function(e) {
+      # Fallback: sample data if file/URL not available
+      warning("Sample data used. Set SNOW_DATA_URL or ensure CSV is in app directory.")
+      start_date <- as.Date("2010-01-01")
+      end_date <- as.Date("2025-02-20")
+      num_days <- as.numeric(difftime(end_date, start_date, units = "days")) + 1
+      snowfalldata <- data.frame(
+        DATE = seq.Date(start_date, end_date, by = "day"),
+        SNOW = runif(num_days, 0, 4) * (runif(num_days) > 0.9),
+        PRCP = runif(num_days, 0, 1) * (runif(num_days) > 0.8)
+      )
+      preyear <- "2024"
+      year <- "2025"
+    })
+    
+    # Set constants for both real and sample data
+    currentYearRange = paste0(preyear,"-",year)
+    preYearRange = paste0(as.numeric(preyear)-1,"-",as.numeric(year)-1)
+    
+    # Create "year" column if it doesn't exist
+    if(!"year" %in% colnames(snowfalldata)) {
+      snowfalldata$year <- year(snowfalldata$DATE)
+    }
+    
+    # Process the data - ensure all required columns are created
+    processed_data <- snowfalldata %>% 
+      # Handle NAs in SNOW
+      mutate(SNOW = ifelse(is.na(SNOW), 0, SNOW)) %>%
+      # Create day of year
+      mutate(doy = yday(DATE)) %>%
+      # Create normalized date for visualization
+      mutate(sameyeardate = as.Date("2021-12-31") + doy) %>%
+      # Calculate days since Oct 1
+      mutate(daysinceOct1 = ifelse(sameyeardate < as.Date("2022-09-30"),
+                                   as.Date(sameyeardate) - as.Date("2021-09-30"),
+                                   as.Date(sameyeardate) - as.Date("2022-09-30"))) %>%
+      # Create date since Oct 1 for x-axis
+      mutate(datesinceOct1 = as.Date("2021-09-30") + daysinceOct1) %>%
+      # Create year range
+      mutate(yearRange= ifelse(sameyeardate < as.Date("2022-09-30"),
+                               paste0(as.character(as.numeric(year)-1),"-",year),
+                               paste0(year,"-",as.character(as.numeric(year)+1)))) %>% 
+      # Group by year range for cumulative calculations
+      group_by(yearRange) %>%
+      # Calculate cumulative values
+      mutate(cum_sum = cumsum(SNOW)) %>%
+      mutate(cum_sum_prec = cumsum(PRCP)) %>%
+      mutate(cum_sum = if_else(datesinceOct1<=1,0,cum_sum)) |> 
+      # Create highlighting variables
+      mutate(impYears = ifelse(yearRange == currentYearRange,
+                               currentYearRange,
+                               ifelse(yearRange == "2014-2015",
+                                      "2014-2015",
+                                      "Historical data"))) %>%
+      mutate(impYears2 = ifelse(yearRange == currentYearRange,
+                                currentYearRange,
+                                ifelse(yearRange == preYearRange,
+                                       preYearRange,
+                                       "Historical data"))) %>%
+      mutate(iscurrentyear = ifelse(yearRange == currentYearRange,
+                                    currentYearRange,
+                                    "Historical data")) %>%
+      # Extract year for sorting
+      mutate(snowYear = as.numeric(substr(yearRange, 6, 9)) * 1.0)
+    
+    return(processed_data)
+  })
+  
+  
+  add_plotting_elements <- reactive({
+    data <- snowfall_data()
+    
+    all_years <- unique(data$yearRange)
+    
+    
+    current_year <- all_years[which.max(as.numeric(substr(all_years, 6, 9)))]
+    prev_idx <- which.max(as.numeric(substr(all_years, 6, 9))) - 1
+    prev_year <- ifelse(prev_idx > 0 && prev_idx <= length(all_years),
+                        all_years[prev_idx], 
+                        all_years[1])
+    
+    # Prepare data based on user selections
+    if (input$highlight_current && input$highlight_previous) {
+      data <- data %>%
+        mutate(highlight = ifelse(yearRange == current_year, "Current Year",
+                                  ifelse(yearRange == prev_year, "Previous Year", "Historical")))
+      data$highlight = factor(data$highlight,levels = c("Historical","Previous Year","Current Year"))
+    } else if (input$highlight_current) {
+      data <- data %>%
+        mutate(highlight = ifelse(yearRange == current_year, "Current Year", "Historical"))
+      data$highlight = factor(data$highlight,levels = c("Historical","Current Year"))
+    } else if (input$highlight_previous) {
+      data <- data %>%
+        mutate(highlight = ifelse(yearRange == prev_year, "Previous Year", "Historical"))
+      data$highlight = factor(data$highlight,levels = c("Historical","Previous Year"))
+    } else {
+      # If no highlights selected, still need the column for plotting
+      data <- data %>%
+        mutate(highlight = "Historical")
+    }
+    
+    # Adjust line sizes and opacity based on user input
+    data <- data %>%
+      mutate(
+        line_alpha = case_when(
+          highlight == "Current Year" ~ 1.0,
+          highlight == "Previous Year" ~ 0.8,
+          TRUE ~ input$historical_alpha
+        )
+      )
+    
+  })
+  
+  
+  filtered_data <- reactive({
+    data <- add_plotting_elements()
+    
+    # Filter by season range
+    data %>%
+      filter(snowYear >= input$season_range[1] & snowYear <= input$season_range[2])
+  })
+  
+  # Create the plot
+  snowPlot <- reactive({
+    # Get data
+    data <- add_plotting_elements()
+    data_subset <- filtered_data()
+    
+    # Check if data exists and has required columns
+    req(data)
+    req("yearRange" %in% colnames(data))
+    req("datesinceOct1" %in% colnames(data))
+    req("cum_sum" %in% colnames(data))
+    
+    # Determine current and previous years
+    all_years <- unique(data$yearRange)
+    if(length(all_years) == 0) {
+      return(ggplot() + 
+               geom_text(aes(x = 0, y = 0), label = "No data available") + 
+               theme_minimal())
+    }
+    
+    
+    # Create base plot
+    p <- ggplot(data_subset, aes(x = datesinceOct1,
+                          group = yearRange, 
+                          text = paste("Year:", yearRange, 
+                                       "<br>Date:", format(datesinceOct1, "%b %d"),
+                                       "<br>Snow:", round((cum_sum/10)*0.393701, 1), "in"))) +
+      scale_size_identity() +
+      scale_alpha_identity() +
+      labs(x = "Month", y = "Cumulative snowfall (in.)") +
+      scale_x_date(date_labels = "%b", 
+                   limits = c(as.Date("2021-10-01"), as.Date("2022-05-30")),
+                   breaks = "1 months") +
+      ylim(c(0, 115)) +
+      theme_pubr(base_size = 16)  + 
+      annotate("text", label = "Data from NOAA: Boston Logan", 
+               x = as.Date("2021-11-10"), y = 110)
+    
+    p1 <- data_subset %>% group_by(snowYear,highlight) %>% 
+      summarise(maxsnow = (max(cum_sum)/10)*0.393701, .groups="drop") %>% 
+      ggplot(mapping=aes(x=snowYear,y=maxsnow)) +
+      xlab("Year") + ylab("End of season cummulative snowfall (in.)") + 
+      coord_cartesian(xlim = c(1934,2025),ylim= c(0,115)) +
+      theme_pubr(base_size = 20) +
+      guides(col=guide_legend("")) 
+    
+    # Add color scale based on which years are highlighted
+    if (input$highlight_current && input$highlight_previous) {
+      p <- p + 
+        geom_line(mapping=aes(y = (cum_sum/10)*0.393701, color = highlight,alpha = line_alpha)) +
+        scale_color_manual(values = c("gray", "red", "blue")) +
+        guides(col=guide_legend(""))
+    } else if (input$highlight_current && !input$highlight_previous) {
+      p <- p + geom_line( mapping=aes(y = (cum_sum/10)*0.393701,color = highlight,alpha = line_alpha)) +
+        scale_color_manual(values = c(
+        if (input$highlight_current) "gray" else "gray", 
+        "blue"
+      ))+
+        guides(col=guide_legend(""))
+    } else if (input$highlight_previous && !input$highlight_current) {
+      p <- p + geom_line( mapping=aes(y = (cum_sum/10)*0.393701,color = highlight,alpha = line_alpha)) +
+        scale_color_manual(values = c(
+          if (input$highlight_current) "gray" else "gray", 
+          "red"
+        ))+
+        guides(col=guide_legend(""))
+    } else {
+      p <- p + geom_line(mapping=aes(y = (cum_sum/10)*0.393701, color = as.numeric(snowYear), alpha = line_alpha)) +
+        scale_color_viridis_c(name = "Year",option = "B") +
+        guides(alpha = "none")
+    }
+    
+    # Apply consistent color scheme based on user selections
+    if (input$highlight_current && input$highlight_previous) {
+      p1 <- p1 + geom_point(aes(col=highlight)) + scale_color_manual(values = c("gray", "red", "blue"))
+    } else if (input$highlight_current && !input$highlight_previous) {
+      p1 <- p1 + geom_point(aes(col=highlight)) + scale_color_manual(values = c(
+        if (input$highlight_current) "gray" else "gray", 
+        "blue"
+      ))
+    } else if (input$highlight_previous && !input$highlight_current) {
+      p1 <- p1 + geom_point(aes(col=highlight)) + scale_color_manual(values = c(
+        if (input$highlight_current) "gray" else "gray", 
+        "red"
+      ))
+    }else {
+      p1 <- p1 + geom_point(aes(col=snowYear)) + scale_color_viridis_c(name = "Year",option = "B") +
+        guides(alpha = "none")
+    }
+    
+    # Calculate statistics for each day across all years
+    stats_data <- data %>%
+      filter(datesinceOct1 >= as.Date("2021-10-01") & 
+               datesinceOct1 <= as.Date("2022-05-30")) %>%
+      group_by(datesinceOct1) %>%
+      summarise(
+        mean_snow = mean((cum_sum/10)*0.393701, na.rm = TRUE),
+        median_snow = median((cum_sum/10)*0.393701, na.rm = TRUE),
+        min_snow = min((cum_sum/10)*0.393701, na.rm = TRUE),
+        max_snow = max((cum_sum/10)*0.393701, na.rm = TRUE),
+        ci_lower50 = quantile((cum_sum/10)*0.393701, 0.25, na.rm = TRUE),
+        ci_upper50 = quantile((cum_sum/10)*0.393701, 0.75, na.rm = TRUE),
+        ci_lower95 = quantile((cum_sum/10)*0.393701, 0.025, na.rm = TRUE),
+        ci_upper95 = quantile((cum_sum/10)*0.393701, 0.975, na.rm = TRUE)
+      ) |> 
+      arrange(datesinceOct1)
+    
+    # Add statistical overlays based on user selections
+    if (input$show_mean) {
+      p <- p + geom_line(data = stats_data, 
+                         aes(x = datesinceOct1, y = mean_snow,group = 1),
+                         color = "black", size = 1.2, linetype = "solid", inherit.aes = FALSE)
+      p1 <- p1 + geom_hline(data = stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),], 
+                         aes(yintercept = mean_snow,group = 1),
+                         color = "black", size = 1.2, linetype = "solid", inherit.aes = FALSE)
+    }
+    
+    if (input$show_median) {
+      p <- p + geom_line(data = stats_data, 
+                         aes(x = datesinceOct1, y = median_snow,group = 1),
+                         color = "black", size = 1.2, linetype = "dashed", inherit.aes = FALSE)
+      
+      p1 <- p1 + geom_hline(data = stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),], 
+                            aes(yintercept = median_snow,group = 1),
+                            color = "black", size = 1.2, linetype = "solid", inherit.aes = FALSE)
+    }
+    
+    if (input$show_min_max) {
+      p <- p + geom_line(data = stats_data, 
+                         aes(x = datesinceOct1, y = min_snow,group = 1),
+                         color = "darkblue", size = 0.8, linetype = "dotted", inherit.aes = FALSE) +
+        geom_line(data = stats_data, 
+                  aes(x = datesinceOct1, y = max_snow,group = 1),
+                  color = "darkblue", size = 0.8, linetype = "dotted", inherit.aes = FALSE)
+      
+      p1 <- p1 + geom_hline(data = stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),], 
+                         aes(yintercept = min_snow,group = 1),
+                         color = "darkblue", size = 0.8, linetype = "dotted", inherit.aes = FALSE) +
+        geom_hline(data = stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),], 
+                  aes(yintercept = max_snow,group = 1),
+                  color = "darkblue", size = 0.8, linetype = "dotted", inherit.aes = FALSE)
+    }
+    
+    if (input$show_ci_95) {
+      p <- p + 
+        geom_line(data = stats_data, 
+                  aes(x = datesinceOct1, y = ci_upper95, group = 1),
+                  color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+        geom_line(data = stats_data, 
+                  aes(x = datesinceOct1, y = ci_lower95, group = 1),
+                  color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+        geom_ribbon(data = stats_data,
+                    aes(x = datesinceOct1, 
+                        ymin = ci_lower95, ymax = ci_upper95,group=1),
+                    fill = "lightgray", alpha = 0.3, inherit.aes = FALSE)
+      
+      holddf = rbind(stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),],
+            stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),])
+      holddf$snowYear = c(0,3000)
+      p1 <- p1 + 
+        geom_hline(data = holddf, 
+                  aes(yintercept = ci_upper95, group = 1),
+                  color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+        geom_hline(data = holddf, 
+                  aes(yintercept = ci_lower95, group = 1),
+                  color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+        geom_ribbon(data = holddf,
+                    aes(x = snowYear, 
+                        ymin = ci_lower95, ymax = ci_upper95,group=1),
+                    fill = "lightgray", alpha = 0.3, inherit.aes = FALSE)
+    }
+    
+    if (input$show_ci_50) {
+      p <- p + 
+        geom_line(data = stats_data, 
+                  aes(x = datesinceOct1, y = ci_upper50, group = 1),
+                  color = "darkgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+        geom_line(data = stats_data, 
+                  aes(x = datesinceOct1, y = ci_lower50, group = 1),
+                  color = "darkgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+        geom_ribbon(data = stats_data,
+                    aes(x = datesinceOct1, 
+                        ymin = ci_lower50, ymax = ci_upper50,group=1),
+                    fill = "darkgray", alpha = 0.3, inherit.aes = FALSE)
+      
+      holddf = rbind(stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),],
+                     stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),])
+      holddf$snowYear = c(0,3000)
+      p1 <- p1 + 
+        geom_hline(data = holddf, 
+                   aes(yintercept = ci_upper50, group = 1),
+                   color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+        geom_hline(data = holddf, 
+                   aes(yintercept = ci_lower50, group = 1),
+                   color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+        geom_ribbon(data = holddf,
+                    aes(x = snowYear, 
+                        ymin = ci_lower50, ymax = ci_upper50,group=1),
+                    fill = "lightgray", alpha = 0.3, inherit.aes = FALSE)
+    }
+    
+    # Add legend
+    p <- p + theme(legend.position = "bottom",
+                   legend.title = element_blank())
+    
+    # Combine plots with patchwork
+    combined_plot <- p + p1
+
+    return(combined_plot)
+  })
+  
+  # Render the plot with Plotly for interactivity (with error handling)
+  # Update your renderPlotly function
+  output$snowPlot <- renderPlotly({
+    # Use tryCatch to handle errors gracefully
+    tryCatch({
+      combined_plot <- snowPlot()
+      
+      # For patchwork plots, we need to render them separately with Plotly
+      # Extract the individual plots
+      p_main <- combined_plot[[1]]
+      p_yearly <- combined_plot[[2]]
+      
+      # Create a subplot with both plots
+      subplot(
+        ggplotly(p_main, tooltip = "text"),
+        ggplotly(p_yearly, tooltip = "text"),
+        nrows =  1
+      ) %>%
+        layout(legend = list(orientation = "h", y = -0.1))
+      
+    }, error = function(e) {
+      # Return a simple plot with error message
+      p <- ggplot() + 
+        annotate("text", x = 0.5, y = 0.5, 
+                 label = paste("Error creating plot:", e$message)) +
+        theme_void() +
+        xlim(0, 1) + ylim(0, 1)
+      
+      ggplotly(p)
+    })
+  })
+  
+  # Display data source information
+  output$dataSource <- renderText({
+    "Data source: NOAA Boston Logan International Airport weather station"
+  })
+  
+  # Download handler for the plot
+  output$downloadPlot <- downloadHandler(
+    filename = function() {
+      paste("boston-snowfall-", Sys.Date(), ".png", sep = "")
+    },
+    content = function(file) {
+      tryCatch({
+        combined_plot <- snowPlot()
+        ggsave(file, plot = combined_plot, device = "png", width = 10, height = 9, dpi = 300)
+      }, error = function(e) {
+        # Create a simple error message plot if the main plot fails
+        p <- ggplot() + 
+          annotate("text", x = 0.5, y = 0.5, label = "Error generating plot") +
+          theme_void() +
+          xlim(0, 1) + ylim(0, 1)
+        ggsave(file, plot = p, device = "png", width = 10, height = 9, dpi = 300)
+      })
+    }
+  )
+}
+
+# Run the application 
+shinyApp(ui = ui, server = server)

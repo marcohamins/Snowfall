@@ -1,0 +1,8 @@
+install.packages("shiny")
+install.packages("readr")
+install.packages("tidyverse")
+install.packages("lubridate")
+install.packages("scales")
+install.packages("ggpubr")
+install.packages("plotly")
+install.packages("patchwork")

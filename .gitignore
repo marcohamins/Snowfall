@@ -1,0 +1,20 @@
+# R
+.Rhistory
+.RData
+.Rproj.user
+*.Rproj
+.Rlib/
+*.o
+*.so
+
+# macOS
+.DS_Store
+
+# Editor / IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Optional: uncomment to ignore large local data if you rely on URL-only in production
+# BostonSnow/USW00014739_2_24_25.csv
