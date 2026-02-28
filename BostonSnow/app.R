@@ -247,7 +247,7 @@ server <- function(input, output, session) {
                                        "<br>Snow:", round((cum_sum/10)*0.393701, 1), "in"))) +
       scale_size_identity() +
       scale_alpha_identity() +
-      labs(x = "Month", y = "Cumulative snowfall (in.)") +
+      labs(x = "Month", y = "Snow accumulation (in.)") +
       scale_x_date(date_labels = "%b", 
                    limits = c(as.Date("2021-10-01"), as.Date("2022-05-30")),
                    breaks = "1 months") +
@@ -259,7 +259,7 @@ server <- function(input, output, session) {
       ggplot(mapping=aes(x=snowYear, y=maxsnow,
                          text = paste0("Season ending: ", snowYear,
                                        "<br>Total snow: ", round(maxsnow, 1), " in"))) +
-      xlab("Year") + ylab("End of season cumulative snowfall (in.)") + 
+      xlab("Year") +
       coord_cartesian(xlim = c(1934,as.numeric(year(Sys.Date()))),ylim= c(0,115)) +
       theme_pubr(base_size = 20) +
       guides(col=guide_legend("")) 
@@ -307,8 +307,11 @@ server <- function(input, output, session) {
       p1 <- p1 + geom_point(aes(col=snowYear)) + scale_color_viridis_c(name = "Year",option = "B") +
         guides(alpha = "none")
     }
-    # No legend for points plot (line plot legend is enough)
-    p1 <- p1 + theme(legend.position = "none")
+    # No legend for points plot; no y-axis labels (shared with left plot)
+    p1 <- p1 + theme(legend.position = "none",
+                     axis.title.y = element_blank(),
+                     axis.text.y = element_blank(),
+                     axis.ticks.y = element_blank())
     
     # Calculate statistics for each day across all years
     stats_data <- data %>%
@@ -425,10 +428,8 @@ server <- function(input, output, session) {
     p <- p + theme(legend.position = "bottom",
                    legend.title = element_blank())
     
-    # Combine plots with patchwork
-    combined_plot <- p + p1
-
-    return(combined_plot)
+    # Return list of plots (not patchwork) so ggplotly keeps legend on first plot
+    return(list(p, p1))
   })
   
   # Render the plot with Plotly for interactivity (with error handling)
@@ -436,18 +437,16 @@ server <- function(input, output, session) {
   output$snowPlot <- renderPlotly({
     # Use tryCatch to handle errors gracefully
     tryCatch({
-      combined_plot <- snowPlot()
+      plots <- snowPlot()
+      p_main <- plots[[1]]
+      p_yearly <- plots[[2]]
       
-      # For patchwork plots, we need to render them separately with Plotly
-      # Extract the individual plots
-      p_main <- combined_plot[[1]]
-      p_yearly <- combined_plot[[2]]
-      
-      # Create a subplot with both plots
+      # Subplot with shared y-axis; only left plot shows y tick labels (right has none)
       subplot(
         ggplotly(p_main, tooltip = "text"),
         ggplotly(p_yearly, tooltip = "text"),
-        nrows =  1
+        nrows = 1,
+        shareY = TRUE
       ) %>%
         layout(legend = list(orientation = "h", y = -0.1))
       
@@ -475,7 +474,8 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       tryCatch({
-        combined_plot <- snowPlot()
+        plots <- snowPlot()
+        combined_plot <- plots[[1]] + plots[[2]]
         ggsave(file, plot = combined_plot, device = "png", width = 10, height = 9, dpi = 300)
       }, error = function(e) {
         # Create a simple error message plot if the main plot fails
