@@ -1,4 +1,5 @@
 install.packages("shiny")
+install.packages("bslib")
 install.packages("readr")
 install.packages("tidyverse")
 install.packages("lubridate")

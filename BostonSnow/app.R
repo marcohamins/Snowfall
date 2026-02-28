@@ -1,5 +1,6 @@
 # Load required libraries
 library(shiny)
+library(bslib)
 library(readr)
 library(ggplot2)
 library(lubridate)
@@ -9,46 +10,65 @@ library(ggpubr)
 library(plotly)
 library(patchwork)
 
-# Define UI
-ui <- fluidPage(
-  titlePanel("Boston Snowfall Accumulation by Winter Season"),
-  
-  sidebarLayout(
-    sidebarPanel(
-      helpText("Snow accumulation (in.) from October 1st for each winter season"),
-      
-      # Year highlighting controls (labels show season names via server)
-      h4("Highlighted Seasons"),
-      uiOutput("highlight_controls"),
-      
-      # Statistical overlay controls
-      h4("Statistical Overlays (from full dataset)"),
-      checkboxInput("show_median", "Show Median", value = FALSE),
-      checkboxInput("show_mean", "Show Mean", value = TRUE),
-      checkboxInput("show_min_max", "Show Min/Max", value = FALSE),
-      checkboxInput("show_ci_50", "Show 50% Confidence Interval", value = FALSE),
-      checkboxInput("show_ci_95", "Show 95% Confidence Interval", value = FALSE),
-      
-      # Alpha control
-      sliderInput("historical_alpha", "Historical Line Opacity:",
-                  min = 0.1, max = 1.0, value = 0.5, step = 0.05),
-      
-      # Season filter
-      sliderInput("season_range","Season Range:",
-                  min = 1936, max = as.numeric(year(Sys.Date())), 
-                  value = c(1936, as.numeric(year(Sys.Date()))), step = 1),
-      
-      
-      # Download button
-      downloadButton("downloadPlot", "Download Plot")
-    ),
-    
-    mainPanel(
-      plotlyOutput("snowPlot", height = "600px"),
-      br(),
-      textOutput("dataSource")
-    )
-  )
+# Mobile-friendly: viewport + responsive plot and touch targets
+# Script sends window width so server can stack plots on narrow screens (shareY kept)
+mobile_head <- tags$head(
+  tags$meta(name = "viewport", content = "width=device-width, initial-scale=1, maximum-scale=1"),
+  tags$script(HTML("
+    function sendWidth() {
+      if (typeof Shiny !== 'undefined')
+        Shiny.setInputValue('plot_width', window.innerWidth, {priority: 'event'});
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', sendWidth);
+    } else {
+      sendWidth();
+    }
+    window.addEventListener('resize', sendWidth);
+  ")),
+  tags$style(HTML("
+    /* Responsive plot container */
+    #snowPlot-container { width: 100%; min-height: 320px; }
+    @media (max-width: 768px) {
+      .shiny-plot-output, .plotly { height: min(70vh, 500px) !important; min-height: 280px !important; }
+      .form-group label { font-size: 1rem; }
+      .checkbox { min-height: 28px; padding: 6px 0; }
+      .shiny-input-container { padding: 4px 0; }
+      .btn { min-height: 44px; padding: 10px 16px; font-size: 1rem; }
+      .form-control { min-height: 44px; font-size: 16px; }
+    }
+  "))
+)
+
+# Define UI (bslib: collapsible sidebar on mobile)
+ui <- page_sidebar(
+  title = "Boston Snowfall by Season",
+  mobile_head,
+  sidebar = sidebar(
+    position = "left",
+    open = "desktop",
+    helpText("Snow accumulation (in.) from October 1st for each winter season"),
+    h4("Highlighted Seasons"),
+    uiOutput("highlight_controls"),
+    h4("Statistical Overlays (from full dataset)"),
+    checkboxInput("show_median", "Show Median", value = FALSE),
+    checkboxInput("show_mean", "Show Mean", value = TRUE),
+    checkboxInput("show_min_max", "Show Min/Max", value = FALSE),
+    checkboxInput("show_ci_50", "Show 50% Confidence Interval", value = FALSE),
+    checkboxInput("show_ci_95", "Show 95% Confidence Interval", value = FALSE),
+    sliderInput("historical_alpha", "Historical Line Opacity:",
+                min = 0.1, max = 1.0, value = 0.5, step = 0.05),
+    sliderInput("season_range", "Season Range:",
+                min = 1936, max = as.numeric(year(Sys.Date())),
+                value = c(1936, as.numeric(year(Sys.Date()))), step = 1, sep = ""),
+    downloadButton("downloadPlot", "Download Plot")
+  ),
+  div(
+    id = "snowPlot-container",
+    plotlyOutput("snowPlot", height = "70vh")
+  ),
+  br(),
+  textOutput("dataSource")
 )
 
 # Define server logic
@@ -267,23 +287,17 @@ server <- function(input, output, session) {
     # Add color scale based on which years are highlighted
     if (input$highlight_current && input$highlight_previous) {
       p <- p + 
-        geom_line(mapping=aes(y = (cum_sum/10)*0.393701, color = highlight,alpha = line_alpha)) +
-        scale_color_manual(values = c("gray", "red", "blue")) +
-        guides(col=guide_legend(""))
+        geom_line(mapping=aes(y = (cum_sum/10)*0.393701, color = highlight, alpha = line_alpha)) +
+        scale_color_manual(values = c("gray", "red", "blue", "Mean" = "black")) +
+        guides(col = guide_legend(""))
     } else if (input$highlight_current && !input$highlight_previous) {
-      p <- p + geom_line( mapping=aes(y = (cum_sum/10)*0.393701,color = highlight,alpha = line_alpha)) +
-        scale_color_manual(values = c(
-        if (input$highlight_current) "gray" else "gray", 
-        "blue"
-      ))+
-        guides(col=guide_legend(""))
+      p <- p + geom_line(mapping = aes(y = (cum_sum/10)*0.393701, color = highlight, alpha = line_alpha)) +
+        scale_color_manual(values = c("gray", "blue", "Mean" = "black")) +
+        guides(col = guide_legend(""))
     } else if (input$highlight_previous && !input$highlight_current) {
-      p <- p + geom_line( mapping=aes(y = (cum_sum/10)*0.393701,color = highlight,alpha = line_alpha)) +
-        scale_color_manual(values = c(
-          if (input$highlight_current) "gray" else "gray", 
-          "red"
-        ))+
-        guides(col=guide_legend(""))
+      p <- p + geom_line(mapping = aes(y = (cum_sum/10)*0.393701, color = highlight, alpha = line_alpha)) +
+        scale_color_manual(values = c("gray", "red", "Mean" = "black")) +
+        guides(col = guide_legend(""))
     } else {
       p <- p + geom_line(mapping=aes(y = (cum_sum/10)*0.393701, color = as.numeric(snowYear), alpha = line_alpha)) +
         scale_color_viridis_c(name = "Year",option = "B") +
@@ -332,9 +346,9 @@ server <- function(input, output, session) {
     
     # Add statistical overlays based on user selections
     if (input$show_mean) {
-      p <- p + geom_line(data = stats_data, 
-                         aes(x = datesinceOct1, y = mean_snow,group = 1),
-                         color = "black", size = 1.2, linetype = "solid", inherit.aes = FALSE)
+      p <- p + geom_line(data = stats_data,
+                         aes(x = datesinceOct1, y = mean_snow, group = 1, color = "Mean"),
+                         size = 1.2, linetype = "solid", inherit.aes = FALSE)
       p1 <- p1 + geom_hline(data = stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),], 
                          aes(yintercept = mean_snow,group = 1),
                          color = "black", size = 1.2, linetype = "solid", inherit.aes = FALSE)
@@ -435,23 +449,25 @@ server <- function(input, output, session) {
   # Render the plot with Plotly for interactivity (with error handling)
   # Update your renderPlotly function
   output$snowPlot <- renderPlotly({
-    # Use tryCatch to handle errors gracefully
+    # Stack plots vertically on narrow screens (mobile), side-by-side on desktop; always share y-axis
+    w <- input$plot_width
+    nrows <- if (is.null(w) || w >= 768) 1 else 2
+    margin <- if (nrows == 2) 0.08 else 0.05
+
     tryCatch({
       plots <- snowPlot()
       p_main <- plots[[1]]
       p_yearly <- plots[[2]]
-      
-      # Convert to plotly; subplot can hide the first plot's legend so we fix it after
+
       pl_main <- ggplotly(p_main, tooltip = "text")
       pl_yearly <- ggplotly(p_yearly, tooltip = "text")
       n_traces_main <- length(pl_main$x$data)
-      
-      out <- subplot(pl_main, pl_yearly, nrows = 1, shareY = TRUE, margin = 0.05) %>%
+
+      out <- subplot(pl_main, pl_yearly, nrows = nrows, shareY = TRUE, margin = margin) %>%
         layout(showlegend = TRUE,
                legend = list(orientation = "h", y = -0.12, x = 0.5, xanchor = "center"),
                margin = list(b = 80))
-      
-      # Subplot may set showlegend=FALSE on all traces; restore legend for first plot only
+
       for (i in seq_len(n_traces_main)) {
         out$x$data[[i]]$showlegend <- TRUE
       }
