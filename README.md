@@ -37,8 +37,7 @@ Interactive Shiny app for **Boston Logan** cumulative snowfall by winter season 
 3. Push this repo to GitHub (including the CSV and the workflow below).
 4. Deploy the app and point it at the CSV in this repo so it stays up to date:
    - In the ShinyApps.io dashboard, open your app → **Settings** → **Environment variables**.
-   - Add: `SNOW_DATA_URL` = `https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/BostonSnow/USW00014739_2_24_25.csv`  
-     (replace `YOUR_USERNAME` and `YOUR_REPO` with your GitHub user and repo name.)
+   - Add: `SNOW_DATA_URL` = `https://raw.githubusercontent.com/marcohamins/Snowfall/main/BostonSnow/USW00014739_2_24_25.csv`
 5. Deploy from R (from the repo root):
 
    ```r

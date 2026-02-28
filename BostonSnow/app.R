@@ -36,7 +36,8 @@ ui <- fluidPage(
       
       # Season filter
       sliderInput("season_range","Season Range:",
-                  min = 1936, max = 2025, value = c(1936, 2025), step = 1),
+                  min = 1936, max = as.numeric(year(Sys.Date())), 
+                  value = c(1936, as.numericyear(Sys.Date())), step = 1),
       
       
       # Download button
@@ -80,15 +81,16 @@ server <- function(input, output, session) {
       # Fallback: sample data if file/URL not available
       warning("Sample data used. Set SNOW_DATA_URL or ensure CSV is in app directory.")
       start_date <- as.Date("2010-01-01")
-      end_date <- as.Date("2025-02-20")
+      #end_date <- as.Date("2025-02-20")
+      end_date <- Sys.Date()
       num_days <- as.numeric(difftime(end_date, start_date, units = "days")) + 1
       snowfalldata <- data.frame(
         DATE = seq.Date(start_date, end_date, by = "day"),
         SNOW = runif(num_days, 0, 4) * (runif(num_days) > 0.9),
         PRCP = runif(num_days, 0, 1) * (runif(num_days) > 0.8)
       )
-      preyear <- "2024"
-      year <- "2025"
+      preyear <- year(Sys.Date())-1
+      year <- year(Sys.Date())
     })
     
     # Set constants for both real and sample data
@@ -240,7 +242,7 @@ server <- function(input, output, session) {
       summarise(maxsnow = (max(cum_sum)/10)*0.393701, .groups="drop") %>% 
       ggplot(mapping=aes(x=snowYear,y=maxsnow)) +
       xlab("Year") + ylab("End of season cummulative snowfall (in.)") + 
-      coord_cartesian(xlim = c(1934,2025),ylim= c(0,115)) +
+      coord_cartesian(xlim = c(1934,as.numeric(year(Sys.Date()))),ylim= c(0,115)) +
       theme_pubr(base_size = 20) +
       guides(col=guide_legend("")) 
     

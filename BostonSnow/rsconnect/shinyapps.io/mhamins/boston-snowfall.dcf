@@ -1,0 +1,10 @@
+name: boston-snowfall
+title:
+username: mhamins
+account: mhamins
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 16786692
+bundleId: 11643841
+url: https://mhamins.shinyapps.io/boston-snowfall/
+version: 1
