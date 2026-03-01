@@ -70,7 +70,7 @@ CITIES <- tibble(
 # Output path: first arg or current directory
 args <- commandArgs(trailingOnly = TRUE)
 out_dir <- if (length(args) > 0) args[1] else getwd()
-out_file <- file.path(out_dir, "snow_multicity.csv")
+out_file <- file.path(out_dir, "BostonSnow/snow_multicity.csv")
 
 parse_dly_line <- function(line) {
   id <- trimws(substr(line, 1, 11))
