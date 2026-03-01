@@ -76,9 +76,15 @@ ui <- page_sidebar(
 # Define server logic
 server <- function(input, output, session) {
 
-  # Raw data: load CSV once, add CITY if missing (legacy Boston-only file)
+  # Debounce plot width so the plot doesn't keep re-rendering on load/resize
+  plot_width_debounced <- debounce(reactive(input$plot_width), millis = 400)
+
+  # Raw data: load CSV; prefer multicity so dropdown has all cities
   raw_snow_data <- reactive({
     data_url <- Sys.getenv("SNOW_DATA_URL", "")
+    if (!nzchar(data_url)) {
+      data_url <- "https://raw.githubusercontent.com/marcohamins/Snowfall/main/BostonSnow/snow_multicity.csv"
+    }
     data_path <- "snow_multicity.csv"
     data_path_legacy <- "USW00014739_2_24_25.csv"
     tryCatch({
@@ -95,20 +101,31 @@ server <- function(input, output, session) {
       }
       snowfalldata
     }, error = function(e) {
-      warning("Sample data used. Set SNOW_DATA_URL or ensure snow_multicity.csv (or USW00014739_2_24_25.csv) in app directory.")
-      start_date <- as.Date("2010-01-01")
-      end_date <- Sys.Date()
-      num_days <- as.numeric(difftime(end_date, start_date, units = "days")) + 1
-      data.frame(
-        STATION = "USW00014739",
-        DATE = seq.Date(start_date, end_date, by = "day"),
-        LATITUDE = 42.36, LONGITUDE = -71.01, ELEVATION = 3.2,
-        NAME = "BOSTON LOGAN INTERNATIONAL AIRPORT, MA US",
-        CITY = "Boston, MA",
-        PRCP = runif(num_days, 0, 1) * (runif(num_days) > 0.8),
-        SNOW = runif(num_days, 0, 4) * (runif(num_days) > 0.9),
-        SNWD = 0, TMAX = NA_real_, TMIN = NA_real_
-      )
+      data_path <- "snow_multicity.csv"
+      data_path_legacy <- "USW00014739_2_24_25.csv"
+      if (file.exists(data_path)) {
+        snowfalldata <- read_csv(data_path, show_col_types = FALSE)
+      } else if (file.exists(data_path_legacy)) {
+        snowfalldata <- read_csv(data_path_legacy, show_col_types = FALSE)
+      } else {
+        warning("Sample data used. Set SNOW_DATA_URL or ensure snow_multicity.csv (or USW00014739_2_24_25.csv) in app directory.")
+        start_date <- as.Date("2010-01-01")
+        end_date <- Sys.Date()
+        num_days <- as.numeric(difftime(end_date, start_date, units = "days")) + 1
+        snowfalldata <- data.frame(
+          STATION = "USW00014739",
+          DATE = seq.Date(start_date, end_date, by = "day"),
+          LATITUDE = 42.36, LONGITUDE = -71.01, ELEVATION = 3.2,
+          NAME = "BOSTON LOGAN INTERNATIONAL AIRPORT, MA US",
+          CITY = "Boston, MA",
+          PRCP = runif(num_days, 0, 1) * (runif(num_days) > 0.8),
+          SNOW = runif(num_days, 0, 4) * (runif(num_days) > 0.9),
+          SNWD = 0, TMAX = NA_real_, TMIN = NA_real_
+        )
+      }
+      snowfalldata$DATE <- as.Date(snowfalldata$DATE)
+      if (!"CITY" %in% names(snowfalldata)) snowfalldata$CITY <- "Boston, MA"
+      snowfalldata
     })
   })
 
@@ -267,8 +284,9 @@ server <- function(input, output, session) {
     }
     
     
-    # Smaller axis font on mobile for readability
-    is_mobile <- !is.null(input$plot_width) && input$plot_width < 768
+    # Smaller axis font on mobile; when stacked, second plot gets its own y-axis
+    w <- plot_width_debounced()
+    is_mobile <- !is.null(w) && w < 768
     base_main <- if (is_mobile) 11 else 16
     base_pt <- if (is_mobile) 12 else 20
 
@@ -334,11 +352,15 @@ server <- function(input, output, session) {
       p1 <- p1 + geom_point(aes(col=snowYear)) + scale_color_viridis_c(name = "Year",option = "B") +
         guides(alpha = "none")
     }
-    # No legend for points plot; no y-axis labels (shared with left plot)
-    p1 <- p1 + theme(legend.position = "none",
-                     axis.title.y = element_blank(),
-                     axis.text.y = element_blank(),
-                     axis.ticks.y = element_blank())
+    # No legend for points plot. On desktop, hide y-axis (shared with left); on mobile (stacked) show y-axis
+    p1 <- p1 + theme(legend.position = "none")
+    if (!is_mobile) {
+      p1 <- p1 + theme(axis.title.y = element_blank(),
+                       axis.text.y = element_blank(),
+                       axis.ticks.y = element_blank())
+    } else {
+      p1 <- p1 + ylab("Snow accumulation (in.)")
+    }
     
     # Calculate statistics for each day across all years
     stats_data <- data %>%
@@ -463,7 +485,7 @@ server <- function(input, output, session) {
   # Update your renderPlotly function
   output$snowPlot <- renderPlotly({
     # Stack plots vertically on narrow screens (mobile), side-by-side on desktop; always share y-axis
-    w <- input$plot_width
+    w <- plot_width_debounced()
     nrows <- if (is.null(w) || w >= 768) 1 else 2
     margin <- if (nrows == 2) 0.08 else 0.05
 

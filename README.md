@@ -37,9 +37,7 @@ Interactive Shiny app for **cumulative snowfall by winter season** (Oct–May) f
    ```
 
 3. Push this repo to GitHub (including the CSV and the workflow below).
-4. Deploy the app and point it at the multi-city CSV in this repo so it stays up to date:
-   - In the ShinyApps.io dashboard, open your app → **Settings** → **Environment variables**.
-   - Add: `SNOW_DATA_URL` = `https://raw.githubusercontent.com/marcohamins/Snowfall/main/BostonSnow/snow_multicity.csv`
+4. (Optional) For multiple cities in the dropdown, the app uses the multicity CSV. If you do not set `SNOW_DATA_URL`, it will try the default URL from this repo (`.../Snowfall/main/BostonSnow/snow_multicity.csv`). To override or ensure fresh data, set an environment variable in the ShinyApps.io dashboard (your app → **Settings** → **Environment variables**): `SNOW_DATA_URL` = `https://raw.githubusercontent.com/marcohamins/Snowfall/main/BostonSnow/snow_multicity.csv`. Ensure the file exists (run the data workflow or `fetch_noaa_snow.R` and push).
 5. Deploy from R (from the repo root):
 
    ```r
