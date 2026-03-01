@@ -58,8 +58,6 @@ ui <- page_sidebar(
     checkboxInput("show_min_max", "Show Min/Max", value = FALSE),
     checkboxInput("show_ci_50", "Show 50% Confidence Interval", value = FALSE),
     checkboxInput("show_ci_95", "Show 95% Confidence Interval", value = FALSE),
-    sliderInput("historical_alpha", "Historical Line Opacity:",
-                min = 0.1, max = 1.0, value = 0.5, step = 0.05),
     sliderInput("season_range", "Season Range:",
                 min = 1936, max = as.numeric(year(Sys.Date())),
                 value = c(1936, as.numeric(year(Sys.Date()))), step = 1, sep = ""),
@@ -72,6 +70,16 @@ ui <- page_sidebar(
   br(),
   textOutput("dataSource")
 )
+
+# Per-city y-axis max (inches) for readable scales; default for unknown cities
+CITY_YMAX <- c(
+  "Boston, MA" = 115, "Buffalo, NY" = 120, "Chicago, IL" = 60, "Cleveland, OH" = 70,
+  "Denver, CO" = 80, "Detroit, MI" = 55, "Milwaukee, WI" = 80,
+  "Minneapolis-St Paul, MN" = 90, "New York, NY" = 35, "Philadelphia, PA" = 65,
+  "Pittsburgh, PA" = 55, "Raleigh, NC" = 25, "Salt Lake City, UT" = 90,
+  "Seattle, WA" = 25, "Washington, D.C." = 40
+)
+DEFAULT_YMAX <- 80
 
 # Define server logic
 server <- function(input, output, session) {
@@ -248,7 +256,7 @@ server <- function(input, output, session) {
         line_alpha = case_when(
           highlight == "Current Year" ~ 1.0,
           highlight == "Previous Year" ~ 0.8,
-          TRUE ~ input$historical_alpha
+          TRUE ~ 0.4
         )
       )
     
@@ -290,6 +298,9 @@ server <- function(input, output, session) {
     base_main <- if (is_mobile) 11 else 16
     base_pt <- if (is_mobile) 12 else 20
 
+    # Per-city y-axis max for readable scale
+    y_max <- if (!is.null(input$city) && input$city %in% names(CITY_YMAX)) CITY_YMAX[[input$city]] else DEFAULT_YMAX
+
     # Create base plot
     p <- ggplot(data_subset, aes(x = datesinceOct1,
                           group = yearRange, 
@@ -302,7 +313,7 @@ server <- function(input, output, session) {
       scale_x_date(date_labels = "%b", 
                    limits = c(as.Date("2021-10-01"), as.Date("2022-05-30")),
                    breaks = "1 months") +
-      ylim(c(0, 115)) +
+      ylim(c(0, y_max)) +
       theme_pubr(base_size = base_main)
     
     p1 <- data_subset %>% group_by(snowYear,highlight) %>% 
@@ -311,7 +322,7 @@ server <- function(input, output, session) {
                          text = paste0("Season ending: ", snowYear,
                                        "<br>Total snow: ", round(maxsnow, 1), " in"))) +
       xlab("Year") +
-      coord_cartesian(xlim = c(1934,as.numeric(year(Sys.Date()))),ylim= c(0,115)) +
+      coord_cartesian(xlim = c(1934,as.numeric(year(Sys.Date()))), ylim = c(0, y_max)) +
       theme_pubr(base_size = base_pt) +
       guides(col=guide_legend("")) 
     
@@ -352,15 +363,9 @@ server <- function(input, output, session) {
       p1 <- p1 + geom_point(aes(col=snowYear)) + scale_color_viridis_c(name = "Year",option = "B") +
         guides(alpha = "none")
     }
-    # No legend for points plot. On desktop, hide y-axis (shared with left); on mobile (stacked) show y-axis
-    p1 <- p1 + theme(legend.position = "none")
-    if (!is_mobile) {
-      p1 <- p1 + theme(axis.title.y = element_blank(),
-                       axis.text.y = element_blank(),
-                       axis.ticks.y = element_blank())
-    } else {
-      p1 <- p1 + ylab("Snow accumulation (in.)")
-    }
+    # No legend for points plot. Both plots show y-axis; second plot label is end-of-season total
+    p1 <- p1 + theme(legend.position = "none") +
+      ylab("End of season total snowfall (in.)")
     
     # Calculate statistics for each day across all years
     stats_data <- data %>%
