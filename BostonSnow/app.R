@@ -79,7 +79,7 @@ CITY_YMAX <- c(
   "Milwaukee, WI" = 80, "Minneapolis-St Paul, MN" = 90, "New York, NY" = 35,
   "Philadelphia, PA" = 65, "Pittsburgh, PA" = 55, "Raleigh, NC" = 25,
   "Salt Lake City, UT" = 90, "Seattle, WA" = 25, "Washington, D.C." = 40,
-  "Jackson, WY" = 120, "Aspen, CO" = 150, "Boise, ID" = 45
+  "Jackson, WY" = 120, "Aspen, CO" = 220, "Boise, ID" = 45
 )
 DEFAULT_YMAX <- 80
 
@@ -139,6 +139,15 @@ server <- function(input, output, session) {
     })
   })
 
+  # Effective city selection: use input when valid, else first available (avoids startup error when no city selected yet)
+  selected_city <- reactive({
+    raw <- raw_snow_data()
+    if (is.null(raw) || nrow(raw) == 0) return("Boston, MA")
+    cities <- sort(unique(raw$CITY))
+    if (is.null(input$city) || !input$city %in% cities) return(cities[1])
+    input$city
+  })
+
   # City dropdown: choices from data (or single city for legacy)
   output$city_ui <- renderUI({
     raw <- raw_snow_data()
@@ -150,8 +159,9 @@ server <- function(input, output, session) {
   # Read and process data (from URL if SNOW_DATA_URL set, else local CSV)
   snowfall_data <- reactive({
     raw <- raw_snow_data()
-    req(raw, input$city)
-    snowfalldata <- raw %>% filter(CITY == input$city)
+    req(raw)
+    city <- selected_city()
+    snowfalldata <- raw %>% filter(CITY == city)
     if (nrow(snowfalldata) == 0) {
       snowfalldata <- raw
       if (nrow(snowfalldata) == 0) return(NULL)
@@ -301,7 +311,8 @@ server <- function(input, output, session) {
     base_pt <- if (is_mobile) 12 else 20
 
     # Per-city y-axis max for readable scale
-    y_max <- if (!is.null(input$city) && input$city %in% names(CITY_YMAX)) CITY_YMAX[[input$city]] else DEFAULT_YMAX
+    city <- selected_city()
+    y_max <- if (city %in% names(CITY_YMAX)) CITY_YMAX[[city]] else DEFAULT_YMAX
 
     # Create base plot
     p <- ggplot(data_subset, aes(x = datesinceOct1,
