@@ -42,12 +42,14 @@ mobile_head <- tags$head(
 
 # Define UI (bslib: collapsible sidebar on mobile)
 ui <- page_sidebar(
-  title = "Boston Snowfall by Season",
+  title = "Snowfall by Season",
   mobile_head,
   sidebar = sidebar(
     position = "left",
     open = "desktop",
     helpText("Snow accumulation (in.) from October 1st for each winter season"),
+    h4("City"),
+    uiOutput("city_ui"),
     h4("Highlighted Seasons"),
     uiOutput("highlight_controls"),
     h4("Statistical Overlays (from full dataset)"),
@@ -73,7 +75,105 @@ ui <- page_sidebar(
 
 # Define server logic
 server <- function(input, output, session) {
-  
+
+  # Raw data: load CSV once, add CITY if missing (legacy Boston-only file)
+  raw_snow_data <- reactive({
+    data_url <- Sys.getenv("SNOW_DATA_URL", "")
+    data_path <- "snow_multicity.csv"
+    data_path_legacy <- "USW00014739_2_24_25.csv"
+    tryCatch({
+      if (nzchar(data_url)) {
+        snowfalldata <- read_csv(data_url, show_col_types = FALSE)
+      } else if (file.exists(data_path)) {
+        snowfalldata <- read_csv(data_path, show_col_types = FALSE)
+      } else {
+        snowfalldata <- read_csv(data_path_legacy, show_col_types = FALSE)
+      }
+      snowfalldata$DATE <- as.Date(snowfalldata$DATE)
+      if (!"CITY" %in% names(snowfalldata)) {
+        snowfalldata$CITY <- "Boston, MA"
+      }
+      snowfalldata
+    }, error = function(e) {
+      warning("Sample data used. Set SNOW_DATA_URL or ensure snow_multicity.csv (or USW00014739_2_24_25.csv) in app directory.")
+      start_date <- as.Date("2010-01-01")
+      end_date <- Sys.Date()
+      num_days <- as.numeric(difftime(end_date, start_date, units = "days")) + 1
+      data.frame(
+        STATION = "USW00014739",
+        DATE = seq.Date(start_date, end_date, by = "day"),
+        LATITUDE = 42.36, LONGITUDE = -71.01, ELEVATION = 3.2,
+        NAME = "BOSTON LOGAN INTERNATIONAL AIRPORT, MA US",
+        CITY = "Boston, MA",
+        PRCP = runif(num_days, 0, 1) * (runif(num_days) > 0.8),
+        SNOW = runif(num_days, 0, 4) * (runif(num_days) > 0.9),
+        SNWD = 0, TMAX = NA_real_, TMIN = NA_real_
+      )
+    })
+  })
+
+  # City dropdown: choices from data (or single city for legacy)
+  output$city_ui <- renderUI({
+    raw <- raw_snow_data()
+    if (is.null(raw) || nrow(raw) == 0) return(selectInput("city", "City", choices = "Boston, MA", selected = "Boston, MA"))
+    cities <- sort(unique(raw$CITY))
+    selectInput("city", "City", choices = cities, selected = if (!is.null(input$city) && input$city %in% cities) input$city else cities[1])
+  })
+
+  # Read and process data (from URL if SNOW_DATA_URL set, else local CSV)
+  snowfall_data <- reactive({
+    raw <- raw_snow_data()
+    req(raw, input$city)
+    snowfalldata <- raw %>% filter(CITY == input$city)
+    if (nrow(snowfalldata) == 0) {
+      snowfalldata <- raw
+      if (nrow(snowfalldata) == 0) return(NULL)
+    }
+    tryCatch({
+      max_date <- max(snowfalldata$DATE, na.rm = TRUE)
+      yr <- as.numeric(format(max_date, "%Y"))
+      mo <- as.numeric(format(max_date, "%m"))
+      if (mo >= 7) {
+        year <- as.character(yr + 1)
+        preyear <- as.character(yr)
+      } else {
+        year <- as.character(yr)
+        preyear <- as.character(yr - 1)
+      }
+    }, error = function(e) {
+      preyear <- as.character(as.numeric(format(Sys.Date(), "%Y")) - 1)
+      year <- format(Sys.Date(), "%Y")
+    })
+
+    currentYearRange <- paste0(preyear, "-", year)
+    preYearRange <- paste0(as.numeric(preyear) - 1, "-", as.numeric(year) - 1)
+    if (!"year" %in% colnames(snowfalldata)) {
+      snowfalldata$year <- year(snowfalldata$DATE)
+    }
+    processed_data <- snowfalldata %>%
+      mutate(SNOW = ifelse(is.na(SNOW), 0, SNOW)) %>%
+      mutate(doy = yday(DATE)) %>%
+      mutate(sameyeardate = as.Date("2021-12-31") + doy) %>%
+      mutate(daysinceOct1 = ifelse(sameyeardate < as.Date("2022-09-30"),
+                                   as.Date(sameyeardate) - as.Date("2021-09-30"),
+                                   as.Date(sameyeardate) - as.Date("2022-09-30"))) %>%
+      mutate(datesinceOct1 = as.Date("2021-09-30") + daysinceOct1) %>%
+      mutate(yearRange = ifelse(sameyeardate < as.Date("2022-09-30"),
+                                paste0(as.character(as.numeric(year) - 1), "-", year),
+                                paste0(year, "-", as.character(as.numeric(year) + 1)))) %>%
+      group_by(yearRange) %>%
+      mutate(cum_sum = cumsum(SNOW)) %>%
+      mutate(cum_sum_prec = cumsum(PRCP)) %>%
+      mutate(cum_sum = if_else(datesinceOct1 <= 1, 0, cum_sum)) %>%
+      mutate(impYears = ifelse(yearRange == currentYearRange, currentYearRange,
+                               ifelse(yearRange == "2014-2015", "2014-2015", "Historical data"))) %>%
+      mutate(impYears2 = ifelse(yearRange == currentYearRange, currentYearRange,
+                                 ifelse(yearRange == preYearRange, preYearRange, "Historical data"))) %>%
+      mutate(iscurrentyear = ifelse(yearRange == currentYearRange, currentYearRange, "Historical data")) %>%
+      mutate(snowYear = as.numeric(substr(yearRange, 6, 9)) * 1.0)
+    return(processed_data)
+  })
+
   # Dynamic labels for current/previous season checkboxes (e.g. "2025-2026", "2024-2025")
   output$highlight_controls <- renderUI({
     data <- snowfall_data()
@@ -92,98 +192,6 @@ server <- function(input, output, session) {
       checkboxInput("highlight_previous", previous, value = TRUE)
     )
   })
-  
-  # Read and process data (from URL if SNOW_DATA_URL set, else local CSV)
-  snowfall_data <- reactive({
-    data_url <- Sys.getenv("SNOW_DATA_URL", "")
-    data_path <- "USW00014739_2_24_25.csv"
-    tryCatch({
-      if (nzchar(data_url)) {
-        snowfalldata <- read_csv(data_url, show_col_types = FALSE)
-      } else {
-        snowfalldata <- read_csv(data_path, show_col_types = FALSE)
-      }
-      snowfalldata$DATE <- as.Date(snowfalldata$DATE)
-      # Infer current winter from latest date in data (e.g. 2025-02-28 -> 2024-2025)
-      max_date <- max(snowfalldata$DATE, na.rm = TRUE)
-      yr <- as.numeric(format(max_date, "%Y"))
-      mo <- as.numeric(format(max_date, "%m"))
-      if (mo >= 7) {
-        year <- as.character(yr + 1)
-        preyear <- as.character(yr)
-      } else {
-        year <- as.character(yr)
-        preyear <- as.character(yr - 1)
-      }
-    }, error = function(e) {
-      # Fallback: sample data if file/URL not available
-      warning("Sample data used. Set SNOW_DATA_URL or ensure CSV is in app directory.")
-      start_date <- as.Date("2010-01-01")
-      #end_date <- as.Date("2025-02-20")
-      end_date <- Sys.Date()
-      num_days <- as.numeric(difftime(end_date, start_date, units = "days")) + 1
-      snowfalldata <- data.frame(
-        DATE = seq.Date(start_date, end_date, by = "day"),
-        SNOW = runif(num_days, 0, 4) * (runif(num_days) > 0.9),
-        PRCP = runif(num_days, 0, 1) * (runif(num_days) > 0.8)
-      )
-      preyear <- year(Sys.Date())-1
-      year <- year(Sys.Date())
-    })
-    
-    # Set constants for both real and sample data
-    currentYearRange = paste0(preyear,"-",year)
-    preYearRange = paste0(as.numeric(preyear)-1,"-",as.numeric(year)-1)
-    
-    # Create "year" column if it doesn't exist
-    if(!"year" %in% colnames(snowfalldata)) {
-      snowfalldata$year <- year(snowfalldata$DATE)
-    }
-    
-    # Process the data - ensure all required columns are created
-    processed_data <- snowfalldata %>% 
-      # Handle NAs in SNOW
-      mutate(SNOW = ifelse(is.na(SNOW), 0, SNOW)) %>%
-      # Create day of year
-      mutate(doy = yday(DATE)) %>%
-      # Create normalized date for visualization
-      mutate(sameyeardate = as.Date("2021-12-31") + doy) %>%
-      # Calculate days since Oct 1
-      mutate(daysinceOct1 = ifelse(sameyeardate < as.Date("2022-09-30"),
-                                   as.Date(sameyeardate) - as.Date("2021-09-30"),
-                                   as.Date(sameyeardate) - as.Date("2022-09-30"))) %>%
-      # Create date since Oct 1 for x-axis
-      mutate(datesinceOct1 = as.Date("2021-09-30") + daysinceOct1) %>%
-      # Create year range
-      mutate(yearRange= ifelse(sameyeardate < as.Date("2022-09-30"),
-                               paste0(as.character(as.numeric(year)-1),"-",year),
-                               paste0(year,"-",as.character(as.numeric(year)+1)))) %>% 
-      # Group by year range for cumulative calculations
-      group_by(yearRange) %>%
-      # Calculate cumulative values
-      mutate(cum_sum = cumsum(SNOW)) %>%
-      mutate(cum_sum_prec = cumsum(PRCP)) %>%
-      mutate(cum_sum = if_else(datesinceOct1<=1,0,cum_sum)) |> 
-      # Create highlighting variables
-      mutate(impYears = ifelse(yearRange == currentYearRange,
-                               currentYearRange,
-                               ifelse(yearRange == "2014-2015",
-                                      "2014-2015",
-                                      "Historical data"))) %>%
-      mutate(impYears2 = ifelse(yearRange == currentYearRange,
-                                currentYearRange,
-                                ifelse(yearRange == preYearRange,
-                                       preYearRange,
-                                       "Historical data"))) %>%
-      mutate(iscurrentyear = ifelse(yearRange == currentYearRange,
-                                    currentYearRange,
-                                    "Historical data")) %>%
-      # Extract year for sorting
-      mutate(snowYear = as.numeric(substr(yearRange, 6, 9)) * 1.0)
-    
-    return(processed_data)
-  })
-  
   
   add_plotting_elements <- reactive({
     data <- snowfall_data()
@@ -259,6 +267,11 @@ server <- function(input, output, session) {
     }
     
     
+    # Smaller axis font on mobile for readability
+    is_mobile <- !is.null(input$plot_width) && input$plot_width < 768
+    base_main <- if (is_mobile) 11 else 16
+    base_pt <- if (is_mobile) 12 else 20
+
     # Create base plot
     p <- ggplot(data_subset, aes(x = datesinceOct1,
                           group = yearRange, 
@@ -272,7 +285,7 @@ server <- function(input, output, session) {
                    limits = c(as.Date("2021-10-01"), as.Date("2022-05-30")),
                    breaks = "1 months") +
       ylim(c(0, 115)) +
-      theme_pubr(base_size = 16)
+      theme_pubr(base_size = base_main)
     
     p1 <- data_subset %>% group_by(snowYear,highlight) %>% 
       summarise(maxsnow = (max(cum_sum)/10)*0.393701, .groups="drop") %>% 
@@ -281,22 +294,22 @@ server <- function(input, output, session) {
                                        "<br>Total snow: ", round(maxsnow, 1), " in"))) +
       xlab("Year") +
       coord_cartesian(xlim = c(1934,as.numeric(year(Sys.Date()))),ylim= c(0,115)) +
-      theme_pubr(base_size = 20) +
+      theme_pubr(base_size = base_pt) +
       guides(col=guide_legend("")) 
     
-    # Add color scale based on which years are highlighted
+    # Add color scale: explicit mapping so Current/Previous Year stay red and blue (not grey)
     if (input$highlight_current && input$highlight_previous) {
       p <- p + 
-        geom_line(mapping=aes(y = (cum_sum/10)*0.393701, color = highlight, alpha = line_alpha)) +
-        scale_color_manual(values = c("gray", "red", "blue", "Mean" = "black")) +
+        geom_line(mapping = aes(y = (cum_sum/10)*0.393701, color = highlight, alpha = line_alpha)) +
+        scale_color_manual(values = c("Historical" = "gray", "Previous Year" = "red", "Current Year" = "blue", "Mean" = "black")) +
         guides(col = guide_legend(""))
     } else if (input$highlight_current && !input$highlight_previous) {
       p <- p + geom_line(mapping = aes(y = (cum_sum/10)*0.393701, color = highlight, alpha = line_alpha)) +
-        scale_color_manual(values = c("gray", "blue", "Mean" = "black")) +
+        scale_color_manual(values = c("Historical" = "gray", "Current Year" = "blue", "Mean" = "black")) +
         guides(col = guide_legend(""))
     } else if (input$highlight_previous && !input$highlight_current) {
       p <- p + geom_line(mapping = aes(y = (cum_sum/10)*0.393701, color = highlight, alpha = line_alpha)) +
-        scale_color_manual(values = c("gray", "red", "Mean" = "black")) +
+        scale_color_manual(values = c("Historical" = "gray", "Previous Year" = "red", "Mean" = "black")) +
         guides(col = guide_legend(""))
     } else {
       p <- p + geom_line(mapping=aes(y = (cum_sum/10)*0.393701, color = as.numeric(snowYear), alpha = line_alpha)) +
@@ -490,7 +503,10 @@ server <- function(input, output, session) {
   
   # Display data source information
   output$dataSource <- renderText({
-    "Data source: NOAA Boston Logan International Airport weather station"
+    data <- snowfall_data()
+    if (is.null(data) || nrow(data) == 0) return("Data source: NOAA GHCN Daily")
+    station_name <- data$NAME[1]
+    paste0("Data source: NOAA ", station_name)
   })
   
   # Download handler for the plot
