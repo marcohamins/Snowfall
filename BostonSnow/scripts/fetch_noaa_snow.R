@@ -14,6 +14,8 @@ CITIES <- tibble(
   city = c(
     "Boston, MA",
     "Buffalo, NY",
+    "Baltimore, MD",
+    "Burlington, VT",
     "Chicago, IL",
     "Cleveland, OH",
     "Denver, CO",
@@ -26,11 +28,16 @@ CITIES <- tibble(
     "Raleigh, NC",
     "Salt Lake City, UT",
     "Seattle, WA",
-    "Washington, D.C."
+    "Washington, D.C.",
+    "Jackson, WY",
+    "Aspen, CO",
+    "Boise, ID"
   ),
   station_id = c(
     "USW00014739",
     "USW00014733",
+    "USW00093721",
+    "USW00014742",
     "USW00094846",
     "USW00014820",
     "USC00050848",
@@ -43,11 +50,16 @@ CITIES <- tibble(
     "USW00013722",
     "USW00024127",
     "USW00024233",
-    "USW00093738"
+    "USW00093738",
+    "USC00484910",
+    "USC00050372",
+    "USW00024131"
   ),
   name = c(
     "BOSTON LOGAN INTERNATIONAL AIRPORT, MA US",
     "BUFFALO NIAGARA INTERNATIONAL AIRPORT, NY US",
+    "BALTIMORE WASHINGTON INTL AP, MD US",
+    "BURLINGTON INTL AIRPORT, VT US",
     "CHICAGO O'HARE INTERNATIONAL AIRPORT, IL US",
     "CLEVELAND HOPKINS INTERNATIONAL AIRPORT, OH US",
     "BOULDER 2 SW CO US",
@@ -60,11 +72,14 @@ CITIES <- tibble(
     "RALEIGH DURHAM INTERNATIONAL AIRPORT, NC US",
     "SALT LAKE CITY INTERNATIONAL AIRPORT, UT US",
     "SEATTLE TACOMA INTERNATIONAL AIRPORT, WA US",
-    "WASHINGTON DULLES INTERNATIONAL AIRPORT, VA US"
+    "WASHINGTON DULLES INTERNATIONAL AIRPORT, VA US",
+    "JACKSON 2 E, WY US",
+    "ASPEN 1 SW CO US",
+    "BOISE AIR TERMINAL, ID US"
   ),
-  latitude = c(42.36057, 42.9405, 41.9786, 41.4050, 40.0167, 42.2125, 42.95489, 44.8825, 40.7794, 39.8729, 40.48459, 35.8776, 40.77069, 47.44467, 38.93485),
-  longitude = c(-71.00975, -78.7322, -87.9047, -82.6556, -105.2667, -83.3534, -87.9045, -93.2218, -73.9632, -75.2414, -80.21448, -78.7875, -111.96503, -122.31361, -77.45581),
-  elevation = c(3.2, 219, 191, 241, 1673, 190, 203, 256, 40, 9, 341, 134, 1288, 112, 90)
+  latitude = c(42.36057, 42.9405, 39.17329, 44.46825, 41.9786, 41.4050, 40.0167, 42.2125, 42.95489, 44.8825, 40.7794, 39.8729, 40.48459, 35.8776, 40.77069, 47.44467, 38.93485, 43.4864, 39.19, 43.5667),
+  longitude = c(-71.00975, -78.7322, -76.68408, -73.1499, -87.9047, -82.6556, -105.2667, -83.3534, -87.9045, -93.2218, -73.9632, -75.2414, -80.21448, -78.7875, -111.96503, -122.31361, -77.45581, -110.7617, -106.82, -116.2406),
+  elevation = c(3.2, 219, 42, 101.1, 191, 241, 1673, 190, 203, 256, 40, 9, 341, 134, 1288, 112, 90, 1893, 2455, 860.5)
 )
 
 # Output path: first arg or current directory
@@ -127,7 +142,12 @@ fetch_one_station <- function(station_id, station_name, lat, lon, elev, city_lab
 
   date_range <- seq(min(elements$date, na.rm = TRUE), max(elements$date, na.rm = TRUE), by = "day")
   wide <- data.frame(DATE = date_range) %>%
-    left_join(elements %>% rename(DATE = date) %>% select(-id), by = "DATE") %>%
+    left_join(elements %>% rename(DATE = date) %>% select(-id), by = "DATE")
+  # Some stations lack SNOW or other elements; ensure all required columns exist
+  for (col in c("PRCP", "SNOW", "SNWD", "TMAX", "TMIN")) {
+    if (!col %in% names(wide)) wide[[col]] <- NA_real_
+  }
+  wide <- wide %>%
     mutate(
       STATION = station_id,
       LATITUDE = lat,

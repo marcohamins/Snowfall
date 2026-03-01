@@ -58,6 +58,7 @@ ui <- page_sidebar(
     checkboxInput("show_min_max", "Show Min/Max", value = FALSE),
     checkboxInput("show_ci_50", "Show 50% Confidence Interval", value = FALSE),
     checkboxInput("show_ci_95", "Show 95% Confidence Interval", value = FALSE),
+    checkboxInput("show_trend", "Show linear trend (second plot)", value = FALSE),
     sliderInput("season_range", "Season Range:",
                 min = 1936, max = as.numeric(year(Sys.Date())),
                 value = c(1936, as.numeric(year(Sys.Date()))), step = 1, sep = ""),
@@ -73,11 +74,12 @@ ui <- page_sidebar(
 
 # Per-city y-axis max (inches) for readable scales; default for unknown cities
 CITY_YMAX <- c(
-  "Boston, MA" = 115, "Buffalo, NY" = 120, "Chicago, IL" = 60, "Cleveland, OH" = 70,
-  "Denver, CO" = 80, "Detroit, MI" = 55, "Milwaukee, WI" = 80,
-  "Minneapolis-St Paul, MN" = 90, "New York, NY" = 35, "Philadelphia, PA" = 65,
-  "Pittsburgh, PA" = 55, "Raleigh, NC" = 25, "Salt Lake City, UT" = 90,
-  "Seattle, WA" = 25, "Washington, D.C." = 40
+  "Boston, MA" = 115, "Buffalo, NY" = 120, "Baltimore, MD" = 35, "Burlington, VT" = 100,
+  "Chicago, IL" = 60, "Cleveland, OH" = 70, "Denver, CO" = 80, "Detroit, MI" = 55,
+  "Milwaukee, WI" = 80, "Minneapolis-St Paul, MN" = 90, "New York, NY" = 35,
+  "Philadelphia, PA" = 65, "Pittsburgh, PA" = 55, "Raleigh, NC" = 25,
+  "Salt Lake City, UT" = 90, "Seattle, WA" = 25, "Washington, D.C." = 40,
+  "Jackson, WY" = 120, "Aspen, CO" = 150, "Boise, ID" = 45
 )
 DEFAULT_YMAX <- 80
 
@@ -476,6 +478,18 @@ server <- function(input, output, session) {
                     aes(x = snowYear, 
                         ymin = ci_lower50, ymax = ci_upper50,group=1),
                     fill = "lightgray", alpha = 0.3, inherit.aes = FALSE)
+    }
+    
+    # Linear trend on second plot (end-of-season total vs year)
+    if (input$show_trend) {
+      trend_df <- data_subset %>%
+        group_by(snowYear) %>%
+        summarise(maxsnow = (max(cum_sum, na.rm = TRUE) / 10) * 0.393701, .groups = "drop")
+      if (nrow(trend_df) >= 2) {
+        p1 <- p1 + geom_smooth(data = trend_df, aes(x = snowYear, y = maxsnow),
+                               method = "lm", se = FALSE, color = "darkgreen", linewidth = 1,
+                               inherit.aes = FALSE)
+      }
     }
     
     # Add legend
