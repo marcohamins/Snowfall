@@ -498,8 +498,8 @@ server <- function(input, output, session) {
         summarise(maxsnow = (max(cum_sum, na.rm = TRUE) / 10) * 0.393701, .groups = "drop")
       if (nrow(trend_df) >= 2) {
         p1 <- p1 + geom_smooth(data = trend_df, aes(x = snowYear, y = maxsnow),
-                               method = "lm", se = FALSE, color = "darkgreen", linewidth = 1,
-                               inherit.aes = FALSE)
+                               method = "lm", se = TRUE, color = "darkgreen", fill = "darkgreen",
+                               linewidth = 1, alpha = 0.2, inherit.aes = FALSE)
       }
     }
     
