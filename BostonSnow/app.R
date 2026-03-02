@@ -79,7 +79,7 @@ CITY_YMAX <- c(
   "Milwaukee, WI" = 80, "Minneapolis-St Paul, MN" = 90, "New York, NY" = 35,
   "Philadelphia, PA" = 65, "Pittsburgh, PA" = 55, "Raleigh, NC" = 25,
   "Salt Lake City, UT" = 90, "Seattle, WA" = 25, "Washington, D.C." = 40,
-  "Jackson, WY" = 120, "Aspen, CO" = 220, "Boise, ID" = 45
+  "Jackson, WY" = 120, "Aspen, CO" = 220, "Breckenridge, CO" = 250, "Boise, ID" = 45
 )
 DEFAULT_YMAX <- 80
 
@@ -275,12 +275,22 @@ server <- function(input, output, session) {
   })
   
   
+  # Minimum seasonal total (inches) to count as valid; seasons at or below are treated as missing data and excluded
+  MIN_SEASONAL_SNOW_INCHES <- 0.5
+
   filtered_data <- reactive({
     data <- add_plotting_elements()
     
     # Filter by season range
-    data %>%
+    data <- data %>%
       filter(snowYear >= input$season_range[1] & snowYear <= input$season_range[2])
+    # Exclude seasons with zero or near-zero total (likely missing/invalid data, not true zero)
+    valid_seasons <- data %>%
+      group_by(snowYear) %>%
+      summarise(total_in = (max(cum_sum, na.rm = TRUE) / 10) * 0.393701, .groups = "drop") %>%
+      filter(total_in > MIN_SEASONAL_SNOW_INCHES) %>%
+      pull(snowYear)
+    data %>% filter(snowYear %in% valid_seasons)
   })
   
   # Create the plot
@@ -310,9 +320,10 @@ server <- function(input, output, session) {
     base_main <- if (is_mobile) 11 else 16
     base_pt <- if (is_mobile) 12 else 20
 
-    # Per-city y-axis max for readable scale
+    # Per-city y-axis max for readable scale; add ~8% headroom
     city <- selected_city()
     y_max <- if (city %in% names(CITY_YMAX)) CITY_YMAX[[city]] else DEFAULT_YMAX
+    y_max <- y_max * 1.08
 
     # Create base plot
     p <- ggplot(data_subset, aes(x = datesinceOct1,
@@ -381,7 +392,7 @@ server <- function(input, output, session) {
       ylab("End of season total snowfall (in.)")
     
     # Calculate statistics for each day across all years
-    stats_data <- data %>%
+    stats_data <- data_subset %>%
       filter(datesinceOct1 >= as.Date("2021-10-01") & 
                datesinceOct1 <= as.Date("2022-05-30")) %>%
       group_by(datesinceOct1) %>%
@@ -410,41 +421,41 @@ server <- function(input, output, session) {
     if (input$show_median) {
       p <- p + geom_line(data = stats_data, 
                          aes(x = datesinceOct1, y = median_snow,group = 1),
-                         color = "black", size = 1.2, linetype = "dashed", inherit.aes = FALSE)
+                         color = "black", size = 1.2, linetype = "dashed", inherit.aes = FALSE, show.legend = FALSE)
       
       p1 <- p1 + geom_hline(data = stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),], 
                             aes(yintercept = median_snow,group = 1),
-                            color = "black", size = 1.2, linetype = "solid", inherit.aes = FALSE)
+                            color = "black", size = 1.2, linetype = "solid", inherit.aes = FALSE, show.legend = FALSE)
     }
     
     if (input$show_min_max) {
       p <- p + geom_line(data = stats_data, 
                          aes(x = datesinceOct1, y = min_snow,group = 1),
-                         color = "darkblue", size = 0.8, linetype = "dotted", inherit.aes = FALSE) +
+                         color = "darkblue", size = 0.8, linetype = "dotted", inherit.aes = FALSE, show.legend = FALSE) +
         geom_line(data = stats_data, 
                   aes(x = datesinceOct1, y = max_snow,group = 1),
-                  color = "darkblue", size = 0.8, linetype = "dotted", inherit.aes = FALSE)
+                  color = "darkblue", size = 0.8, linetype = "dotted", inherit.aes = FALSE, show.legend = FALSE)
       
       p1 <- p1 + geom_hline(data = stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),], 
                          aes(yintercept = min_snow,group = 1),
-                         color = "darkblue", size = 0.8, linetype = "dotted", inherit.aes = FALSE) +
+                         color = "darkblue", size = 0.8, linetype = "dotted", inherit.aes = FALSE, show.legend = FALSE) +
         geom_hline(data = stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),], 
                   aes(yintercept = max_snow,group = 1),
-                  color = "darkblue", size = 0.8, linetype = "dotted", inherit.aes = FALSE)
+                  color = "darkblue", size = 0.8, linetype = "dotted", inherit.aes = FALSE, show.legend = FALSE)
     }
     
     if (input$show_ci_95) {
       p <- p + 
         geom_line(data = stats_data, 
                   aes(x = datesinceOct1, y = ci_upper95, group = 1),
-                  color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+                  color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE, show.legend = FALSE) +
         geom_line(data = stats_data, 
                   aes(x = datesinceOct1, y = ci_lower95, group = 1),
-                  color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+                  color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE, show.legend = FALSE) +
         geom_ribbon(data = stats_data,
                     aes(x = datesinceOct1, 
                         ymin = ci_lower95, ymax = ci_upper95,group=1),
-                    fill = "lightgray", alpha = 0.3, inherit.aes = FALSE)
+                    fill = "lightgray", alpha = 0.3, inherit.aes = FALSE, show.legend = FALSE)
       
       holddf = rbind(stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),],
             stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),])
@@ -452,28 +463,28 @@ server <- function(input, output, session) {
       p1 <- p1 + 
         geom_hline(data = holddf, 
                   aes(yintercept = ci_upper95, group = 1),
-                  color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+                  color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE, show.legend = FALSE) +
         geom_hline(data = holddf, 
                   aes(yintercept = ci_lower95, group = 1),
-                  color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+                  color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE, show.legend = FALSE) +
         geom_ribbon(data = holddf,
                     aes(x = snowYear, 
                         ymin = ci_lower95, ymax = ci_upper95,group=1),
-                    fill = "lightgray", alpha = 0.3, inherit.aes = FALSE)
+                    fill = "lightgray", alpha = 0.3, inherit.aes = FALSE, show.legend = FALSE)
     }
     
     if (input$show_ci_50) {
       p <- p + 
         geom_line(data = stats_data, 
                   aes(x = datesinceOct1, y = ci_upper50, group = 1),
-                  color = "darkgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+                  color = "darkgray", size = 0.8, linetype = "solid", inherit.aes = FALSE, show.legend = FALSE) +
         geom_line(data = stats_data, 
                   aes(x = datesinceOct1, y = ci_lower50, group = 1),
-                  color = "darkgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+                  color = "darkgray", size = 0.8, linetype = "solid", inherit.aes = FALSE, show.legend = FALSE) +
         geom_ribbon(data = stats_data,
                     aes(x = datesinceOct1, 
                         ymin = ci_lower50, ymax = ci_upper50,group=1),
-                    fill = "darkgray", alpha = 0.3, inherit.aes = FALSE)
+                    fill = "darkgray", alpha = 0.3, inherit.aes = FALSE, show.legend = FALSE)
       
       holddf = rbind(stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),],
                      stats_data[stats_data$datesinceOct1 == max(stats_data$datesinceOct1),])
@@ -481,14 +492,14 @@ server <- function(input, output, session) {
       p1 <- p1 + 
         geom_hline(data = holddf, 
                    aes(yintercept = ci_upper50, group = 1),
-                   color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+                   color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE, show.legend = FALSE) +
         geom_hline(data = holddf, 
                    aes(yintercept = ci_lower50, group = 1),
-                   color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE) +
+                   color = "lightgray", size = 0.8, linetype = "solid", inherit.aes = FALSE, show.legend = FALSE) +
         geom_ribbon(data = holddf,
                     aes(x = snowYear, 
                         ymin = ci_lower50, ymax = ci_upper50,group=1),
-                    fill = "lightgray", alpha = 0.3, inherit.aes = FALSE)
+                    fill = "lightgray", alpha = 0.3, inherit.aes = FALSE, show.legend = FALSE)
     }
     
     # Linear trend on second plot (end-of-season total vs year)
